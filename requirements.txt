@@ -1,0 +1,25 @@
+# Core data processing
+pandas>=1.3.0
+numpy>=1.20.0
+scikit-learn>=1.0.0
+tqdm>=4.62.0
+
+# Graph ML
+torch>=1.10.0
+torch_geometric>=2.0.0
+torch_sparse>=0.6.0
+torch_scatter>=2.0.0
+networkx>=2.6.0
+
+# Multi-omics imputation
+snfpy>=0.2.0
+tensorly>=0.6.0
+
+# Visualization
+matplotlib>=3.4.0
+seaborn>=0.11.0
+plotly>=5.0.0
+umap-learn>=0.5.0
+
+# Optional: MOFA2 interface (requires R with BiocManager and MOFA2 installed)
+rpy2>=3.4.0
