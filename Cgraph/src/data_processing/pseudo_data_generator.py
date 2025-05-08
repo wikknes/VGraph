@@ -95,7 +95,7 @@ def generate_pseudo_omics_data(
     participant_ids = [f'SUBJ{i:04d}' for i in range(n_participants)]
     
     # Create cluster assignments for participants
-    cluster_assignments, cluster_centers = make_blobs(
+    X, y, cluster_centers = make_blobs(
         n_samples=n_participants,
         n_features=2,  # 2D embedding for visualization
         centers=n_clusters,
@@ -105,17 +105,14 @@ def generate_pseudo_omics_data(
         random_state=random_state,
         return_centers=True
     )
+    cluster_assignments = X  # 2D embedding
     
     # Normalize to 0-1 range for easy visualization
     scaler = StandardScaler()
     cluster_assignments = scaler.fit_transform(cluster_assignments)
     
     # Convert to cluster labels
-    y_true = np.argmin(
-        np.sum((cluster_assignments[:, np.newaxis, :] - 
-               cluster_centers[np.newaxis, :, :]) ** 2, axis=2),
-        axis=1
-    )
+    y_true = y  # Use the cluster labels directly returned by make_blobs
     
     # Track which participants have which modalities
     availability = np.random.rand(n_participants, len(modalities))
@@ -350,7 +347,7 @@ def _add_cross_modality_correlations(output_dir, modalities, metadata):
             df2 = data[mod2]
             
             # Find common participants
-            common_participants = set(df1.index).intersection(set(df2.index))
+            common_participants = list(set(df1.index).intersection(set(df2.index)))
             if len(common_participants) < 10:
                 continue
                 

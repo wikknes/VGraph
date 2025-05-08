@@ -85,8 +85,10 @@ def load_multi_omics_data(
                 
             # Track which participants have which modalities
             for lab_id in df['lab_ID']:
-                modality_presence[lab_id][modality] = True
-                all_lab_ids.add(lab_id)
+                # Convert to string to ensure consistent type
+                str_lab_id = str(lab_id)
+                modality_presence[str_lab_id][modality] = True
+                all_lab_ids.add(str_lab_id)
                 
             # Set lab_ID as index
             df.set_index('lab_ID', inplace=True)
@@ -98,6 +100,7 @@ def load_multi_omics_data(
             logger.error(f"Error loading {modality}: {e}")
     
     # Create summary of modality availability
+    # Lab IDs are already converted to strings when added to all_lab_ids
     availability_df = pd.DataFrame(index=sorted(all_lab_ids), columns=modality_names)
     for lab_id in all_lab_ids:
         for modality in modality_names:

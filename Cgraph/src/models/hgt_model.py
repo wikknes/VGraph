@@ -60,10 +60,8 @@ class HeterogeneousGraphTransformer(torch.nn.Module):
             conv = HGTConv(
                 hidden_channels, 
                 hidden_channels, 
-                self.node_types,
-                self.edge_types, 
-                num_heads, 
-                group='sum'
+                (self.node_types, self.edge_types), 
+                num_heads
             )
             self.convs.append(conv)
             
@@ -95,14 +93,17 @@ class HeterogeneousGraphTransformer(torch.nn.Module):
         
         # Pass through HGT layers with layer normalization and residual connections
         for i in range(self.num_layers):
-            h_dict_new = {}
-            
             # Apply HGT convolution
-            for node_type in h_dict.keys():
-                h_dict_new[node_type] = self.convs[i](h_dict, edge_index_dict, node_type)
+            h_dict_new = self.convs[i](h_dict, edge_index_dict)
             
             # Apply layer normalization, residual connections, and dropout
             for node_type in h_dict.keys():
+                # In newer PyG versions, HGTConv might not return embeddings for all node types
+                # if there are no connections to that node type
+                if node_type not in h_dict_new:
+                    logger.warning(f"No embeddings returned for {node_type}, using previous embeddings")
+                    continue
+                
                 # Add residual connection
                 h_dict[node_type] = h_dict[node_type] + h_dict_new[node_type]
                 
@@ -160,10 +161,8 @@ class HeterogeneousGraphTransformerWithCrossAttention(torch.nn.Module):
             conv = HGTConv(
                 hidden_channels, 
                 hidden_channels, 
-                self.node_types,
-                self.edge_types, 
-                num_heads, 
-                group='sum'
+                (self.node_types, self.edge_types), 
+                num_heads
             )
             self.convs.append(conv)
             
@@ -205,9 +204,7 @@ class HeterogeneousGraphTransformerWithCrossAttention(torch.nn.Module):
         # Pass through HGT layers with cross-attention
         for i in range(self.num_layers):
             # Apply HGT convolution
-            h_dict_hgt = {}
-            for node_type in h_dict.keys():
-                h_dict_hgt[node_type] = self.convs[i](h_dict, edge_index_dict, node_type)
+            h_dict_hgt = self.convs[i](h_dict, edge_index_dict)
             
             # Apply cross-attention for feature nodes
             h_dict_cross = {}
@@ -224,6 +221,12 @@ class HeterogeneousGraphTransformerWithCrossAttention(torch.nn.Module):
             
             # Combine HGT and cross-attention, apply layer norm and residual
             for node_type in h_dict.keys():
+                # In newer PyG versions, HGTConv might not return embeddings for all node types
+                # if there are no connections to that node type
+                if node_type not in h_dict_hgt:
+                    logger.warning(f"No embeddings returned for {node_type}, using previous embeddings")
+                    continue
+                    
                 # Add HGT output
                 new_h = h_dict_hgt[node_type]
                 

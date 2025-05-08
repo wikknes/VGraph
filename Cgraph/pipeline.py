@@ -195,6 +195,45 @@ class MultiOmicsIntegration:
             
         return self.multi_omics_graph
     
+    def validate_graph(self):
+        """
+        Validate and fix any edge index issues in the graph.
+        
+        Returns:
+            HeteroData: Validated graph
+        """
+        logger.info("Validating graph edge indices...")
+        
+        # Keep track of node counts
+        node_counts = {nt: self.multi_omics_graph[nt].x.size(0) for nt in self.multi_omics_graph.node_types}
+        
+        # Validate each edge type
+        for edge_type in self.multi_omics_graph.edge_types:
+            src_type, _, dst_type = edge_type
+            edge_index = self.multi_omics_graph[edge_type].edge_index
+            
+            # Check if any indices are out of bounds
+            src_max = node_counts[src_type]
+            dst_max = node_counts[dst_type]
+            
+            # Create mask for valid indices
+            src_valid = edge_index[0] < src_max
+            dst_valid = edge_index[1] < dst_max
+            valid_mask = src_valid & dst_valid
+            
+            if not torch.all(valid_mask):
+                invalid_count = (~valid_mask).sum().item()
+                logger.warning(f"Found {invalid_count} invalid edges for {edge_type}, fixing...")
+                
+                # Filter out invalid edges
+                self.multi_omics_graph[edge_type].edge_index = edge_index[:, valid_mask]
+                
+                # Also fix edge attributes if they exist
+                if hasattr(self.multi_omics_graph[edge_type], 'edge_attr') and self.multi_omics_graph[edge_type].edge_attr is not None:
+                    self.multi_omics_graph[edge_type].edge_attr = self.multi_omics_graph[edge_type].edge_attr[valid_mask]
+        
+        return self.multi_omics_graph
+    
     def train_model(self):
         """
         Train the HGT model on the multi-omics graph.
@@ -202,6 +241,9 @@ class MultiOmicsIntegration:
         Returns:
             tuple: (model, embeddings_dict)
         """
+        # Validate the graph before training
+        self.validate_graph()
+        
         logger.info("Training HGT model...")
         self.hgt_model, self.embeddings = train_hgt_model(
             self.multi_omics_graph,

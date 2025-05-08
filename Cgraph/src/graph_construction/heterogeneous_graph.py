@@ -75,11 +75,22 @@ def create_multi_omics_graph(modalities, availability_df, correlation_threshold=
         edge_indices = []
         edge_attrs = []
         
+        # Get the number of participants and features
+        n_participants = graph['participant'].x.size(0)
+        
         for pid in all_participants:
             if pid in df.index:  # Participant has this modality
                 p_idx = participant_id_map[pid]
+                # Make sure participant index is valid
+                if p_idx >= n_participants:
+                    continue
+                    
                 for feature_name in feature_names:
                     f_idx = feature_id_map[feature_name]
+                    # Make sure feature index is valid
+                    if f_idx >= n_features:
+                        continue
+                        
                     value = df.loc[pid, feature_name]
                     if not np.isnan(value):
                         edge_indices.append((p_idx, f_idx))
@@ -151,7 +162,7 @@ def add_cross_modality_edges(graph, modalities, correlation_threshold=0.5, min_s
             df2 = modalities[mod2]
             
             # Find participants with both modalities
-            common_participants = set(df1.index).intersection(set(df2.index))
+            common_participants = list(set(df1.index).intersection(set(df2.index)))
             
             if len(common_participants) < min_samples:
                 logger.info(f"Not enough common participants between {mod1} and {mod2}, skipping cross-modality edges")
@@ -179,6 +190,10 @@ def add_cross_modality_edges(graph, modalities, correlation_threshold=0.5, min_s
                 mod1_indices = {name: i for i, name in enumerate(mod1_feature_names)}
                 mod2_indices = {name: i for i, name in enumerate(mod2_feature_names)}
                 
+                # Make sure we track the total number of nodes correctly
+                mod1_node_count = graph[mod1].x.size(0)
+                mod2_node_count = graph[mod2].x.size(0)
+                
                 # Find correlated feature pairs
                 for f1 in cross_corr.index:
                     for f2 in cross_corr.columns:
@@ -188,8 +203,10 @@ def add_cross_modality_edges(graph, modalities, correlation_threshold=0.5, min_s
                                 f1_idx = mod1_indices[f1]
                                 f2_idx = mod2_indices[f2]
                                 
-                                feature_edges.append((f1_idx, f2_idx))
-                                edge_attrs.append(corr_val)
+                                # Make sure indices are valid
+                                if f1_idx < mod1_node_count and f2_idx < mod2_node_count:
+                                    feature_edges.append((f1_idx, f2_idx))
+                                    edge_attrs.append(corr_val)
                 
                 if feature_edges:
                     # Add edges to graph
