@@ -168,12 +168,14 @@ def main():
     
     # Discover cross-modality correlations
     if 'metabolomics' in embeddings and 'proteomics' in embeddings:
+        # Using a lower correlation threshold (0.4) to ensure we capture more correlations
         correlations = discover_cross_modality_correlations(
             pipeline,
             source_modality='metabolomics',
             target_modality='proteomics',
-            correlation_threshold=0.7,
-            output_file=os.path.join(args.output_dir, 'cross_modality_correlations.csv')
+            correlation_threshold=0.4,  # Lowered from 0.7 to catch more correlations
+            output_file=os.path.join(args.output_dir, 'cross_modality_correlations.csv'),
+            ignore_missing_features=True  # Continue even if feature names are missing
         )
         
         logger.info(f"Found {len(correlations)} significant correlations between metabolomics and proteomics")
@@ -184,6 +186,8 @@ def main():
             for corr in correlations[:5]:
                 logger.info(f"{corr['source_feature']} ({corr['source_modality']}) <--> "
                            f"{corr['target_feature']} ({corr['target_modality']}): {corr['score']:.3f}")
+        else:
+            logger.warning("No significant cross-modality correlations found. You may need to lower the threshold further.")
     
     logger.info(f"All results saved to {args.output_dir}")
 

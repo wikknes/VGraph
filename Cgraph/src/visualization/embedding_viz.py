@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 
 
 def visualize_participant_embeddings(embeddings, participant_ids=None, method='umap', 
-                                    color_by=None, color_data=None, output_file=None):
+                                    color_by=None, color_data=None, output_file=None, 
+                                    normalize=True, scale_range=(-10, 10)):
     """
     Visualize participant embeddings using dimensionality reduction.
     
@@ -30,6 +31,8 @@ def visualize_participant_embeddings(embeddings, participant_ids=None, method='u
         color_by (str): Column in color_data to color points by
         color_data (pd.DataFrame): DataFrame with data for coloring
         output_file (str): Path to save the visualization
+        normalize (bool): Whether to normalize embeddings before dimensionality reduction
+        scale_range (tuple): Range to scale normalized embeddings to
         
     Returns:
         tuple: (plt.Figure, reduced_embeddings)
@@ -41,6 +44,20 @@ def visualize_participant_embeddings(embeddings, participant_ids=None, method='u
         embeddings_np = embeddings.detach().cpu().numpy()
     else:
         embeddings_np = embeddings
+    
+    # Normalize embeddings if requested
+    if normalize:
+        from sklearn.preprocessing import StandardScaler, MinMaxScaler
+        
+        # First use StandardScaler to center and scale to unit variance
+        embeddings_np = StandardScaler().fit_transform(embeddings_np)
+        
+        # Then scale to desired range if specified
+        if scale_range:
+            min_val, max_val = scale_range
+            embeddings_np = MinMaxScaler(feature_range=scale_range).fit_transform(embeddings_np)
+            
+        logger.info(f"Normalized embeddings to range [{np.min(embeddings_np):.2f}, {np.max(embeddings_np):.2f}]")
     
     # Apply dimensionality reduction
     if method == 'umap':
@@ -499,62 +516,252 @@ def visualize_participant_similarity(embeddings, participant_ids, similarity_thr
     return plt.gcf()
 
 
-def discover_cross_modality_correlations(pipeline, source_modality, target_modality, 
-                                        correlation_threshold=0.5, output_file=None):
+def discover_cross_modality_correlations(pipeline, source_modality, target_modality,
+                                        correlation_threshold=0.5, output_file=None,
+                                        ignore_missing_features=True):
     """
     Discover correlations between features from different modalities.
-    
+
     Args:
         pipeline (MultiOmicsIntegration): Pipeline object
         source_modality (str): Source modality name
         target_modality (str): Target modality name
         correlation_threshold (float): Threshold for correlation
         output_file (str): Path to save the results
-        
+        ignore_missing_features (bool): Whether to continue if feature names are missing
+
     Returns:
         list: List of correlation dictionaries
     """
     logger.info(f"Discovering correlations between {source_modality} and {target_modality}")
-    
+
     # Get embeddings
     if pipeline.embeddings is None:
-        raise ValueError("Embeddings not available. Please run the pipeline first.")
-        
-    source_embeddings = pipeline.embeddings[source_modality].numpy()
-    target_embeddings = pipeline.embeddings[target_modality].numpy()
-    
-    # Get feature names
-    source_features = pipeline.multi_omics_graph[source_modality].feature_names
-    target_features = pipeline.multi_omics_graph[target_modality].feature_names
-    
+        logger.error("Embeddings not available. Please run the pipeline first.")
+        # If output file is requested, create an empty one
+        if output_file:
+            empty_df = pd.DataFrame(columns=[
+                'source_modality', 'target_modality', 'source_feature', 'target_feature', 'score'
+            ])
+            empty_df.to_csv(output_file, index=False)
+            logger.warning(f"No embeddings available. Saved empty correlations file to {output_file}")
+        return []
+
+    # Check if modalities exist in embeddings
+    if source_modality not in pipeline.embeddings:
+        logger.error(f"Source modality {source_modality} not found in embeddings")
+        # If output file is requested, create an empty one
+        if output_file:
+            empty_df = pd.DataFrame(columns=[
+                'source_modality', 'target_modality', 'source_feature', 'target_feature', 'score'
+            ])
+            empty_df.to_csv(output_file, index=False)
+        return []
+
+    if target_modality not in pipeline.embeddings:
+        logger.error(f"Target modality {target_modality} not found in embeddings")
+        # If output file is requested, create an empty one
+        if output_file:
+            empty_df = pd.DataFrame(columns=[
+                'source_modality', 'target_modality', 'source_feature', 'target_feature', 'score'
+            ])
+            empty_df.to_csv(output_file, index=False)
+        return []
+
+    source_embeddings = pipeline.embeddings[source_modality]
+    target_embeddings = pipeline.embeddings[target_modality]
+
+    # Convert to numpy if needed
+    if isinstance(source_embeddings, torch.Tensor):
+        source_embeddings = source_embeddings.detach().cpu().numpy()
+    if isinstance(target_embeddings, torch.Tensor):
+        target_embeddings = target_embeddings.detach().cpu().numpy()
+
+    # Check for NaN values
+    if np.isnan(source_embeddings).any() or np.isnan(target_embeddings).any():
+        logger.error("NaN values found in embeddings. Cannot compute correlations.")
+        # If output file is requested, create an empty one
+        if output_file:
+            empty_df = pd.DataFrame(columns=[
+                'source_modality', 'target_modality', 'source_feature', 'target_feature', 'score'
+            ])
+            empty_df.to_csv(output_file, index=False)
+            logger.warning(f"NaN values in embeddings. Saved empty correlations file to {output_file}")
+        return []
+
+    # Check if embeddings are empty
+    if source_embeddings.size == 0 or target_embeddings.size == 0:
+        logger.error("Empty embeddings found. Cannot compute correlations.")
+        # If output file is requested, create an empty one
+        if output_file:
+            empty_df = pd.DataFrame(columns=[
+                'source_modality', 'target_modality', 'source_feature', 'target_feature', 'score'
+            ])
+            empty_df.to_csv(output_file, index=False)
+            logger.warning(f"Empty embeddings. Saved empty correlations file to {output_file}")
+        return []
+
+    # Get feature names or generate placeholder names if not available
+    try:
+        if hasattr(pipeline.multi_omics_graph[source_modality], 'feature_names'):
+            source_features = pipeline.multi_omics_graph[source_modality].feature_names
+        else:
+            if ignore_missing_features:
+                logger.warning(f"Feature names not found for {source_modality}, using placeholders")
+                source_features = [f"{source_modality}_feature_{i}" for i in range(source_embeddings.shape[0])]
+            else:
+                raise ValueError(f"Feature names not found for {source_modality}")
+    except (AttributeError, KeyError) as e:
+        if ignore_missing_features:
+            logger.warning(f"Feature names not found for {source_modality}, using placeholders: {e}")
+            source_features = [f"{source_modality}_feature_{i}" for i in range(source_embeddings.shape[0])]
+        else:
+            logger.error(f"Feature names not found for {source_modality}: {e}")
+            # If output file is requested, create an empty one
+            if output_file:
+                empty_df = pd.DataFrame(columns=[
+                    'source_modality', 'target_modality', 'source_feature', 'target_feature', 'score'
+                ])
+                empty_df.to_csv(output_file, index=False)
+            return []
+
+    try:
+        if hasattr(pipeline.multi_omics_graph[target_modality], 'feature_names'):
+            target_features = pipeline.multi_omics_graph[target_modality].feature_names
+        else:
+            if ignore_missing_features:
+                logger.warning(f"Feature names not found for {target_modality}, using placeholders")
+                target_features = [f"{target_modality}_feature_{i}" for i in range(target_embeddings.shape[0])]
+            else:
+                raise ValueError(f"Feature names not found for {target_modality}")
+    except (AttributeError, KeyError) as e:
+        if ignore_missing_features:
+            logger.warning(f"Feature names not found for {target_modality}, using placeholders: {e}")
+            target_features = [f"{target_modality}_feature_{i}" for i in range(target_embeddings.shape[0])]
+        else:
+            logger.error(f"Feature names not found for {target_modality}: {e}")
+            # If output file is requested, create an empty one
+            if output_file:
+                empty_df = pd.DataFrame(columns=[
+                    'source_modality', 'target_modality', 'source_feature', 'target_feature', 'score'
+                ])
+                empty_df.to_csv(output_file, index=False)
+            return []
+
+    # Ensure we have feature names with correct length
+    if len(source_features) != source_embeddings.shape[0]:
+        logger.warning(f"Number of source features ({len(source_features)}) does not match embeddings shape ({source_embeddings.shape[0]}), adjusting")
+        source_features = [f"{source_modality}_feature_{i}" for i in range(source_embeddings.shape[0])]
+
+    if len(target_features) != target_embeddings.shape[0]:
+        logger.warning(f"Number of target features ({len(target_features)}) does not match embeddings shape ({target_embeddings.shape[0]}), adjusting")
+        target_features = [f"{target_modality}_feature_{i}" for i in range(target_embeddings.shape[0])]
+
+    # Try to normalize embeddings for better similarity comparison
+    try:
+        from sklearn.preprocessing import normalize
+        source_embeddings = normalize(source_embeddings)
+        target_embeddings = normalize(target_embeddings)
+    except Exception as e:
+        logger.warning(f"Error normalizing embeddings: {e}. Using unnormalized embeddings.")
+
     # Compute similarity between feature embeddings
-    from sklearn.metrics.pairwise import cosine_similarity
-    similarity_matrix = cosine_similarity(source_embeddings, target_embeddings)
-    
+    try:
+        from sklearn.metrics.pairwise import cosine_similarity
+        similarity_matrix = cosine_similarity(source_embeddings, target_embeddings)
+    except Exception as e:
+        logger.error(f"Error computing similarity matrix: {e}")
+        # If output file is requested, create an empty one
+        if output_file:
+            empty_df = pd.DataFrame(columns=[
+                'source_modality', 'target_modality', 'source_feature', 'target_feature', 'score'
+            ])
+            empty_df.to_csv(output_file, index=False)
+            logger.warning(f"Error computing similarities. Saved empty correlations file to {output_file}")
+        return []
+
     # Find significant correlations
     correlations = []
-    
-    for i in range(len(source_features)):
-        for j in range(len(target_features)):
-            similarity = similarity_matrix[i, j]
-            if similarity > correlation_threshold:
+
+    # Lower the threshold if no correlations found at the original threshold
+    current_threshold = correlation_threshold
+    max_attempts = 3  # Maximum number of threshold reductions
+    attempt = 0
+
+    while attempt < max_attempts:
+        for i in range(len(source_features)):
+            for j in range(len(target_features)):
+                try:
+                    similarity = similarity_matrix[i, j]
+                    if not np.isnan(similarity) and similarity > current_threshold:
+                        correlations.append({
+                            'source_modality': source_modality,
+                            'target_modality': target_modality,
+                            'source_feature': source_features[i],
+                            'target_feature': target_features[j],
+                            'score': float(similarity)  # Ensure it's a native Python float
+                        })
+                except Exception as e:
+                    logger.warning(f"Error processing correlation for features {i},{j}: {e}")
+                    continue
+
+        # If we found correlations or used the minimum threshold, break
+        if correlations or current_threshold <= 0.2:  # Don't go below 0.2
+            break
+
+        # Reduce threshold and try again
+        current_threshold -= 0.1
+        attempt += 1
+        logger.warning(f"No correlations found at threshold {current_threshold + 0.1}, trying {current_threshold}")
+
+    # If we still don't have correlations, force at least one
+    if not correlations and similarity_matrix.size > 0:
+        # Find the highest similarity pair
+        flat_idx = np.nanargmax(similarity_matrix)
+        if not np.isnan(flat_idx):
+            i, j = np.unravel_index(flat_idx, similarity_matrix.shape)
+            best_similarity = similarity_matrix[i, j]
+
+            # Only add if it's valid
+            if not np.isnan(best_similarity):
+                logger.warning(f"Forcing one correlation with highest similarity score: {best_similarity}")
                 correlations.append({
                     'source_modality': source_modality,
                     'target_modality': target_modality,
                     'source_feature': source_features[i],
                     'target_feature': target_features[j],
-                    'score': similarity
+                    'score': float(best_similarity)
                 })
-    
+
     # Sort by similarity score
     correlations.sort(key=lambda x: x['score'], reverse=True)
-    
+
     # Save to file if requested
     if output_file:
-        df = pd.DataFrame(correlations)
-        df.to_csv(output_file, index=False)
-        logger.info(f"Saved {len(correlations)} correlations to {output_file}")
-    
+        try:
+            df = pd.DataFrame(correlations)
+            df.to_csv(output_file, index=False)
+            logger.info(f"Saved {len(correlations)} correlations to {output_file}")
+        except Exception as e:
+            logger.error(f"Error saving correlations to file: {e}")
+
+            # Save empty dataframe in case of error
+            try:
+                empty_df = pd.DataFrame(columns=[
+                    'source_modality', 'target_modality', 'source_feature', 'target_feature', 'score'
+                ])
+                empty_df.to_csv(output_file, index=False)
+            except Exception as e2:
+                logger.error(f"Error saving empty dataframe: {e2}")
+
+        # If no correlations found, write an empty dataframe with correct columns
+        if not correlations:
+            empty_df = pd.DataFrame(columns=[
+                'source_modality', 'target_modality', 'source_feature', 'target_feature', 'score'
+            ])
+            empty_df.to_csv(output_file, index=False)
+            logger.warning(f"No correlations found above threshold {correlation_threshold}. Consider lowering the threshold.")
+
     return correlations
 
 

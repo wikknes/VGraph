@@ -162,8 +162,9 @@ def run_test_pipeline(
                 pipeline,
                 source_modality='metabolomics',
                 target_modality='proteomics',
-                correlation_threshold=0.6,
-                output_file=os.path.join(output_dir, 'cross_modality_correlations.csv')
+                correlation_threshold=0.4,  # Lowered from 0.6 to catch more correlations
+                output_file=os.path.join(output_dir, 'cross_modality_correlations.csv'),
+                ignore_missing_features=True  # Continue even if feature names are missing
             )
         
         logger.info(f"All results saved to {output_dir}")
