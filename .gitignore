@@ -76,9 +76,6 @@ htmlcov/
 *.log
 *.sqlite3
 
-# Ignore data/results directories if needed
-sample_data/
-results/
 
 # macOS
 .DS_Store
